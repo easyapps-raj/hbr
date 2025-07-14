@@ -131,7 +131,7 @@ async function mineArchive(browser, originalUrl) {
     headless: "new",
     args: ["--no-sandbox"],
     defaultViewport: null,
-  });
+  }); //
 
   const surf = await browser.newPage();
   console.log("Collecting article links from HBR…");
