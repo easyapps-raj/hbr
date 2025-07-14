@@ -71,12 +71,11 @@ async function mineArchive(browser, originalUrl) {
   }
   const snapshotHref = await resultsRoot.$eval(snapLinkSel, (a) => a.href);
 
-  /* 4️⃣ open the snapshot */
-  await page.goto(snapshotHref, {
-    waitUntil: "domcontentloaded",
-    timeout: 60_000,
-  });
-
+  /* 4️⃣ click the link inside the frame → wait for TOP page navigation */
+  await Promise.all([
+    resultsRoot.$eval(snapLinkSel, (a) => a.click()), // trigger navigation
+    page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 0 }),
+  ]);
   /* 5️⃣ scrape title + body and filter noise */
   const { title, body } = await page.evaluate(() => {
     const title =
