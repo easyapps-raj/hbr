@@ -33,6 +33,10 @@ async function collectHbrLinks(page) {
 async function mineArchive(browser, originalUrl) {
   const loader = "https://archive.is/nNiSn";
   const page = await browser.newPage();
+  await page.setUserAgent(
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+      "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+  );
 
   /* 1️⃣ open loader and submit URL */
   await page.goto(loader, { waitUntil: "domcontentloaded", timeout: 30_000 });
@@ -134,6 +138,11 @@ async function mineArchive(browser, originalUrl) {
   }); //
 
   const surf = await browser.newPage();
+  await surf.setUserAgent(
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+      "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+  );
+
   console.log("Collecting article links from HBR…");
   const links = await collectHbrLinks(surf);
   console.log(`✓ Found ${links.length} links`);
