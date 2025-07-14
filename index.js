@@ -29,67 +29,61 @@ async function collectHbrLinks(page) {
   return [...new Set(links)];
 }
 
-/* ---------- iframe‑aware mineArchive using nNiSn loader ---------- */
+/* ---------- mineArchive: search → pick first snapshot → scrape ---------- */
 async function mineArchive(browser, originalUrl) {
-  const loader = "https://archive.is/nNiSn";
-  const page = await browser.newPage();
-  await page.setUserAgent(
+  /* use normal desktop UA so archive.today doesn’t hide the form */
+  const UA =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-      "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-  );
+    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 
-  /* 1️⃣ open loader and submit URL */
-  await page.goto(loader, { waitUntil: "domcontentloaded", timeout: 30_000 });
-  const inputSel = 'input[name="q"]';
-  await page.focus(inputSel);
-  await page.evaluate(
-    (sel) => (document.querySelector(sel).value = ""),
-    inputSel
-  );
-  await page.type(inputSel, originalUrl);
+  /* 1️⃣ open archive.today home */
+  const page = await browser.newPage();
+  await page.setUserAgent(UA);
+  await page.goto("https://archive.is/", {
+    waitUntil: "domcontentloaded",
+    timeout: 30_000,
+  });
+
+  /* 2️⃣ fill the SEARCH form (not the save‑url form) */
+  const searchInput = 'form#search input[name="q"]';
+  await page.type(searchInput, originalUrl);
   await Promise.all([
     page.keyboard.press("Enter"),
     page.waitForNavigation({ waitUntil: "domcontentloaded" }),
   ]);
 
-  /* 2️⃣ check every 0.5 s for either:
-        a) a frame with snapshot
-        b) <h1> already in root document                                 */
-  const maxT = Date.now() + 60_000;
-  let contentFrame = null;
-  while (Date.now() < maxT) {
-    // a) look for a frame whose URL contains /archive.is/<digits>/
-    contentFrame =
-      page
-        .frames()
-        .find((f) => /https:\/\/archive\.is\/\d{14}\//.test(f.url())) ?? null;
-
-    // b) if root already has <h1>, use the root
-    const rootHasH1 = await page.$("h1");
-    if (contentFrame || rootHasH1) break;
-
-    await new Promise((r) => setTimeout(r, 500));
+  /* 3️⃣ results table lives inside <frame name="frame"> */
+  let resultsRoot = page; // default
+  const frameHandle = await page.$('frame[name="frame"]');
+  if (frameHandle) {
+    resultsRoot = await frameHandle.contentFrame();
   }
 
-  if (!contentFrame && !(await page.$("h1"))) {
-    console.warn("❌ no snapshot for:", originalUrl);
+  /* pick the first snapshot link */
+  const snapLinkSel = 'div.TEXT-BLOCK a[href^="https://archive.is/"]';
+  try {
+    await resultsRoot.waitForSelector(snapLinkSel, { timeout: 15_000 });
+  } catch {
+    console.warn("❌ no snapshot for", originalUrl);
     await page.close();
     return { title: "NO SNAPSHOT", body: "", snapshotUrl: "none" };
   }
+  const snapshotHref = await resultsRoot.$eval(snapLinkSel, (a) => a.href);
 
-  /* 3️⃣ pick the right context (frame or root) */
-  const ctx = contentFrame || page;
+  /* 4️⃣ open the snapshot */
+  await page.goto(snapshotHref, {
+    waitUntil: "domcontentloaded",
+    timeout: 60_000,
+  });
 
-  /* 4️⃣ wait for article text inside that context */
-  await ctx.waitForSelector("h1, article p, #CONTENT p", { timeout: 60_000 });
-
-  /* 5️⃣ extract */
-  const { title, body } = await ctx.evaluate(() => {
+  /* 5️⃣ scrape title + body and filter noise */
+  const { title, body } = await page.evaluate(() => {
     const title =
       document.querySelector("#CONTENT h1")?.innerText.trim() ||
+      document.querySelector("h1")?.innerText.trim() ||
       document.title.replace(/ \|.*$/, "").trim();
 
-    const unwantedPhrases = [
+    const unwanted = [
       "Subscribe",
       "Sign In",
       "Read more",
@@ -100,31 +94,26 @@ async function mineArchive(browser, originalUrl) {
       "{{terminalError}}",
       "Recaptcha requires verification",
       "Privacy - Terms",
-      /\d{1,3}%\s*$/, // percentage indicators like 10%, 20%, etc.
+      /\d{1,3}%\s*$/, // 0%, 10%, …
     ];
+    const bad = (t) =>
+      !t ||
+      unwanted.some((p) => (typeof p === "string" ? t.includes(p) : p.test(t)));
 
-    const isUnwanted = (text) => {
-      const trimmed = text.trim();
-      return (
-        !trimmed ||
-        unwantedPhrases.some((phrase) =>
-          typeof phrase === "string"
-            ? trimmed.includes(phrase)
-            : phrase.test(trimmed)
-        )
-      );
-    };
-
-    const textBlocks = Array.from(
-      document.querySelectorAll("#CONTENT p, #CONTENT div")
+    const blocks = Array.from(
+      document.querySelectorAll("#CONTENT p, #CONTENT div, article p")
     )
       .map((el) => el.innerText.trim())
-      .filter((text) => !isUnwanted(text));
+      .filter((t) => !bad(t));
 
-    return { title, body: textBlocks.join("\n\n") };
+    /* drop short header crumbs (category lines, etc.) */
+    const firstReal = blocks.findIndex((t) => t.length > 40);
+    const clean = firstReal === -1 ? blocks : blocks.slice(firstReal);
+
+    return { title, body: clean.join("\n\n") };
   });
 
-  const snapshotUrl = (contentFrame || page).url();
+  const snapshotUrl = page.url();
   await page.close();
   return { title, body, snapshotUrl };
 }
@@ -132,7 +121,7 @@ async function mineArchive(browser, originalUrl) {
 /* ---------- Orchestrator ---------- */
 (async () => {
   const browser = await puppeteer.launch({
-    headless: "new",
+    headless: false,
     args: ["--no-sandbox"],
     defaultViewport: null,
   }); //
@@ -152,7 +141,7 @@ async function mineArchive(browser, originalUrl) {
     try {
       console.log(`[${i + 1}/${links.length}] Archiving ${link}`);
       const { title, body, snapshotUrl } = await mineArchive(browser, link);
-      console.log(`✓ ${title}: (${body})`);
+      console.log(`${title}:${body}`);
       rows.push([title, body]);
     } catch (err) {
       console.error(`✗ ${link}: ${err.message}`);
