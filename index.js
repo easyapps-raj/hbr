@@ -121,7 +121,7 @@ async function mineArchive(browser, originalUrl) {
 /* ---------- Orchestrator ---------- */
 (async () => {
   const browser = await puppeteer.launch({
-    headless: false,
+    headless: "new",
     args: ["--no-sandbox"],
     defaultViewport: null,
   }); //
