@@ -41,11 +41,12 @@ async function mineArchive(browser, originalUrl) {
   await page.setUserAgent(UA);
   await page.goto("https://archive.is/", {
     waitUntil: "domcontentloaded",
-    timeout: 30_000,
+    timeout: 0,
   });
 
   /* 2️⃣ fill the SEARCH form (not the save‑url form) */
   const searchInput = 'form#search input[name="q"]';
+  await page.waitForSelector(searchInput, { timeout: 45_000 });
   await page.type(searchInput, originalUrl);
   await Promise.all([
     page.keyboard.press("Enter"),
@@ -122,7 +123,13 @@ async function mineArchive(browser, originalUrl) {
 (async () => {
   const browser = await puppeteer.launch({
     headless: "new",
-    args: ["--no-sandbox"],
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--window-size=1920,1080",
+    ],
     defaultViewport: null,
   }); //
 
