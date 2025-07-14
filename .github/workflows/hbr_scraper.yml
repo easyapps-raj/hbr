@@ -1,0 +1,23 @@
+name: HBR Scraper
+
+on:
+  workflow_dispatch: # manual “Run workflow” button
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: ⬇️  Checkout repo
+        uses: actions/checkout@v4
+
+      - name: 🟢  Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20 # or whatever version you use
+
+      - name: 📦  Install dependencies
+        run: npm ci # assumes you’ve committed package.json/lock
+
+      - name: 🏃‍♂️  Run HBR scraper
+        run: node index.js # or the path to your script
