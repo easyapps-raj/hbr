@@ -1,11 +1,12 @@
 import puppeteer from "puppeteer-extra";
 import Stealth from "puppeteer-extra-plugin-stealth";
+import axios from "axios";
 import dotenv from "dotenv";
+
 dotenv.config();
 
 puppeteer.use(Stealth());
 
-/* ---------- Step 1: grab HBR article URLs ---------- */
 async function collectHbrLinks(page) {
   await page.goto("https://hbr.org/the-latest", {
     waitUntil: "domcontentloaded",
@@ -29,14 +30,11 @@ async function collectHbrLinks(page) {
   return [...new Set(links)];
 }
 
-/* ---------- mineArchive: search → pick first snapshot → scrape ---------- */
 async function mineArchive(browser, originalUrl) {
-  /* use normal desktop UA so archive.today doesn’t hide the form */
   const UA =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 
-  /* 1️⃣ open archive.today home */
   const page = await browser.newPage();
   await page.setUserAgent(UA);
   await page.goto("https://archive.is/", {
@@ -44,7 +42,6 @@ async function mineArchive(browser, originalUrl) {
     timeout: 0,
   });
 
-  /* 2️⃣ fill the SEARCH form (not the save‑url form) */
   const searchInput = 'form#search input[name="q"]';
   await page.waitForSelector(searchInput, { timeout: 45_000 });
   await page.type(searchInput, originalUrl);
@@ -53,30 +50,27 @@ async function mineArchive(browser, originalUrl) {
     page.waitForNavigation({ waitUntil: "domcontentloaded" }),
   ]);
 
-  /* 3️⃣ results table lives inside <frame name="frame"> */
-  let resultsRoot = page; // default
+  let resultsRoot = page;
   const frameHandle = await page.$('frame[name="frame"]');
   if (frameHandle) {
     resultsRoot = await frameHandle.contentFrame();
   }
 
-  /* pick the first snapshot link */
   const snapLinkSel = 'div.TEXT-BLOCK a[href^="https://archive.is/"]';
   try {
     await resultsRoot.waitForSelector(snapLinkSel, { timeout: 15_000 });
   } catch {
-    console.warn("❌ no snapshot for", originalUrl);
+    console.warn("no snapshot for", originalUrl);
     await page.close();
     return { title: "NO SNAPSHOT", body: "", snapshotUrl: "none" };
   }
   const snapshotHref = await resultsRoot.$eval(snapLinkSel, (a) => a.href);
 
-  /* 4️⃣ click the link inside the frame → wait for TOP page navigation */
   await Promise.all([
-    resultsRoot.$eval(snapLinkSel, (a) => a.click()), // trigger navigation
+    resultsRoot.$eval(snapLinkSel, (a) => a.click()),
     page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 0 }),
   ]);
-  /* 5️⃣ scrape title + body and filter noise */
+
   const { title, body } = await page.evaluate(() => {
     const title =
       document.querySelector("#CONTENT h1")?.innerText.trim() ||
@@ -94,7 +88,7 @@ async function mineArchive(browser, originalUrl) {
       "{{terminalError}}",
       "Recaptcha requires verification",
       "Privacy - Terms",
-      /\d{1,3}%\s*$/, // 0%, 10%, …
+      /\d{1,3}%\s*$/,
     ];
     const bad = (t) =>
       !t ||
@@ -106,7 +100,6 @@ async function mineArchive(browser, originalUrl) {
       .map((el) => el.innerText.trim())
       .filter((t) => !bad(t));
 
-    /* drop short header crumbs (category lines, etc.) */
     const firstReal = blocks.findIndex((t) => t.length > 40);
     const clean = firstReal === -1 ? blocks : blocks.slice(firstReal);
 
@@ -118,7 +111,58 @@ async function mineArchive(browser, originalUrl) {
   return { title, body, snapshotUrl };
 }
 
-/* ---------- Orchestrator ---------- */
+async function cleanBodyWithGroq(title, body) {
+  try {
+    const prompt = `
+    Clean the following article content:
+    - Remove ads, social media mentions, "share", "subscribe", "sign in","sign up", or any unrelated text.
+    - Preserve the article's main content only.
+    - Also dont write Here is the cleaned-up article content:
+    - Try give full article and dont cut in between
+    
+    Title: ${title}
+    Body:
+    ${body}
+    `;
+
+    const response = await axios.post(
+      "https://api.groq.com/openai/v1/chat/completions",
+      {
+        model: "llama3-70b-8192",
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: 2000,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    return response.data.choices[0].message.content.trim();
+  } catch (err) {
+    console.error("GROQ cleanup failed:", err.message);
+    return body;
+  }
+}
+const endpoint = process.env.WP_URL;
+
+async function sendToWordPress(title, body) {
+  try {
+    const response = await axios.post(endpoint, {
+      title: title,
+      body: body,
+    });
+    console.log("✓ Posted to WordPress:", response.data);
+  } catch (err) {
+    console.error(
+      "✗ Error posting to WordPress:",
+      err.response?.data || err.message
+    );
+  }
+}
+
 (async () => {
   const browser = await puppeteer.launch({
     headless: "new",
@@ -147,12 +191,13 @@ async function mineArchive(browser, originalUrl) {
     try {
       console.log(`[${i + 1}/${links.length}] Archiving ${link}`);
       const { title, body, snapshotUrl } = await mineArchive(browser, link);
-      console.log(`${title}:${body}`);
-      rows.push([title, body]);
+      const cleanedBody = await cleanBodyWithGroq(title, body);
+      sendToWordPress(title, cleanedBody);
+      console.log(`${title}:${cleanedBody}`);
+      rows.push([title, cleanedBody]);
     } catch (err) {
       console.error(`✗ ${link}: ${err.message}`);
     }
-    // throttle so archive.today doesn't block us
     await new Promise((res) => setTimeout(res, 1500));
   }
 
@@ -160,5 +205,5 @@ async function mineArchive(browser, originalUrl) {
   console.log(rows);
   if (rows.length) await appendRows(rows);
   await browser.close();
-  console.log("✅ Done!");
+  console.log("Done!");
 })();
