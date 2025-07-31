@@ -10,9 +10,11 @@ puppeteer.use(Stealth());
 async function collectHbrLinks(page) {
   try {
     await page.goto("https://hbr.org/the-latest", {
-      waitUntil: "domcontentloaded",
-      timeout: 60000,
+      waitUntil: "load",
+      timeout: 80000,
     });
+
+    await page.waitForSelector("h3.hed a", { timeout: 30000 });
   } catch (err) {
     console.error("Failed to load HBR:", err.message);
     return [];
