@@ -2,7 +2,6 @@ import puppeteer from "puppeteer-extra";
 import Stealth from "puppeteer-extra-plugin-stealth";
 import axios from "axios";
 import dotenv from "dotenv";
-import { timeout } from "puppeteer";
 
 dotenv.config();
 
@@ -23,7 +22,7 @@ async function waitForSelectorWithRetry(page, selector, retries = 3) {
 async function collectHbrLinks(page) {
   try {
     await page.goto("https://hbr.org/the-latest", {
-      waitUntil: "networkidle0", // 1. Wait for the page to be fully loaded and idle
+      waitUntil: "networkidle2", // 1. Wait for the page to be fully loaded and idle
       timeout: 90000, // Keep a generous timeout for the initial load
     });
 
@@ -33,7 +32,7 @@ async function collectHbrLinks(page) {
       await page.waitForSelector(consentButtonSelector, { timeout: 5000 }); // Wait briefly for the button
       console.log("Consent banner found, clicking accept...");
       await page.click(consentButtonSelector);
-      await page.waitForNavigation({ waitUntil: "networkidle0" }); // Wait for any reload after clicking
+      await page.waitForNavigation({ waitUntil: "networkidle2" }); // Wait for any reload after clicking
     } catch (e) {
       console.log("No consent banner found, or it timed out. Continuing...");
     }
@@ -218,6 +217,24 @@ async function sendToWordPress(title, body) {
   }); //
 
   const surf = await browser.newPage();
+  await surf.setRequestInterception(true);
+  surf.on("request", (req) => {
+    const resourceType = req.resourceType();
+    const url = req.url();
+
+    if (
+      resourceType === "image" ||
+      resourceType === "stylesheet" ||
+      resourceType === "font" ||
+      url.includes("google-analytics") ||
+      url.includes("googletagmanager") ||
+      url.includes("facebook")
+    ) {
+      req.abort();
+    } else {
+      req.continue();
+    }
+  });
   await surf.setUserAgent(
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
   );
