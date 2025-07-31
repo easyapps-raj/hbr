@@ -23,18 +23,32 @@ async function waitForSelectorWithRetry(page, selector, retries = 3) {
 async function collectHbrLinks(page) {
   try {
     await page.goto("https://hbr.org/the-latest", {
-      waitUntil: "domcontentloaded",
-      timeout: 80000,
+      waitUntil: "networkidle0", // 1. Wait for the page to be fully loaded and idle
+      timeout: 90000, // Keep a generous timeout for the initial load
     });
+
+    // 2. Add a step to handle cookie consent banners
+    try {
+      const consentButtonSelector = "#truste-consent-button"; // Common selector for consent buttons
+      await page.waitForSelector(consentButtonSelector, { timeout: 5000 }); // Wait briefly for the button
+      console.log("Consent banner found, clicking accept...");
+      await page.click(consentButtonSelector);
+      await page.waitForNavigation({ waitUntil: "networkidle0" }); // Wait for any reload after clicking
+    } catch (e) {
+      console.log("No consent banner found, or it timed out. Continuing...");
+    }
+
     const html = await page.content();
     console.log("Page content snippet:", html.slice(0, 1000));
 
+    // Now, your existing logic should find the selector
     await waitForSelectorWithRetry(page, "h3.hed a");
   } catch (err) {
     console.error("Failed to load HBR:", err.message);
     return [];
   }
 
+  // The rest of your function remains the same...
   while (true) {
     const btn = await page.$('li.load-more a[js-target="load-ten-more-link"]');
     if (!btn) break;
@@ -42,9 +56,9 @@ async function collectHbrLinks(page) {
       btn.click(),
       page.waitForResponse(
         (r) => r.url().includes("/latest") || r.url().includes("/load"),
-        { timeout: 60000 }
+        { timeout: 90000 }
       ),
-      await new Promise((res) => setTimeout(res, 800)),
+      new Promise((res) => setTimeout(res, 800)),
     ]);
   }
 
