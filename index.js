@@ -34,49 +34,45 @@ async function retry(fn, attempts = 3, delay = 3000) {
 async function collectHbrLinks(page) {
   try {
     await page.goto("https://hbr.org/the-latest", {
-      waitUntil: "networkidle2", // 1. Wait for the page to be fully loaded and idle
-      timeout: 90000, // Keep a generous timeout for the initial load
+      waitUntil: "networkidle2",
+      timeout: 90000,
     });
 
-    // 2. Add a step to handle cookie consent banners
     try {
-      const consentButtonSelector = "#truste-consent-button"; // Common selector for consent buttons
-      await page.waitForSelector(consentButtonSelector, { timeout: 5000 }); // Wait briefly for the button
+      const consentButtonSelector = "#truste-consent-button";
+      await page.waitForSelector(consentButtonSelector, { timeout: 5000 });
       console.log("Consent banner found, clicking accept...");
       await page.click(consentButtonSelector);
-      await page.waitForNavigation({ waitUntil: "networkidle2" }); // Wait for any reload after clicking
+      await page.waitForNavigation({ waitUntil: "networkidle2" });
     } catch (e) {
       console.log("No consent banner found, or it timed out. Continuing...");
     }
 
-    const html = await page.content();
-    console.log("Page content snippet:", html.slice(0, 1000));
+    await page.waitForSelector("h3.hed a", { timeout: 60000 });
 
-    // Now, your existing logic should find the selector
-    await waitForSelectorWithRetry(page, "h3.hed a");
+    while (true) {
+      const btn = await page.$(
+        'li.load-more a[js-target="load-ten-more-link"]'
+      );
+      if (!btn) break;
+      await Promise.all([
+        btn.click(),
+        page.waitForResponse(
+          (r) => r.url().includes("/latest") || r.url().includes("/load"),
+          { timeout: 90000 }
+        ),
+        new Promise((res) => setTimeout(res, 800)),
+      ]);
+    }
+
+    const links = await page.$$eval("h3.hed a", (as) =>
+      as.map((a) => new URL(a.getAttribute("href"), "https://hbr.org").href)
+    );
+    return [...new Set(links)];
   } catch (err) {
     console.error("Failed to load HBR:", err.message);
     return [];
   }
-
-  // The rest of your function remains the same...
-  while (true) {
-    const btn = await page.$('li.load-more a[js-target="load-ten-more-link"]');
-    if (!btn) break;
-    await Promise.all([
-      btn.click(),
-      page.waitForResponse(
-        (r) => r.url().includes("/latest") || r.url().includes("/load"),
-        { timeout: 90000 }
-      ),
-      new Promise((res) => setTimeout(res, 800)),
-    ]);
-  }
-
-  const links = await page.$$eval("h3.hed a", (as) =>
-    as.map((a) => new URL(a.getAttribute("href"), "https://hbr.org").href)
-  );
-  return [...new Set(links)];
 }
 
 async function mineArchive(browser, originalUrl) {
@@ -86,16 +82,17 @@ async function mineArchive(browser, originalUrl) {
   );
 
   try {
+    // Go directly to the submission URL. This is the most robust method.
     await page.goto(`https://archive.is/${originalUrl}`, {
       waitUntil: "networkidle2",
-      timeout: 150000,
+      timeout: 150000, // Give archiving up to 2.5 minutes, as it can be slow.
     });
   } catch (e) {
     console.warn(
       `Failed during archive submission for ${originalUrl}: ${e.message}`
     );
     await page.close();
-    return { title: "ARCHIVE FAILED", body: "", snapshotUrl: "none" };
+    return { title: "ARCHIVE FAILED", body: "" };
   }
 
   let resultsRoot = page;
@@ -110,7 +107,7 @@ async function mineArchive(browser, originalUrl) {
   } catch {
     console.warn("no snapshot for", originalUrl);
     await page.close();
-    return { title: "NO SNAPSHOT", body: "", snapshotUrl: "none" };
+    return { title: "NO SNAPSHOT", body: "" };
   }
 
   const snapshotHref = await resultsRoot.$eval(snapLinkSel, (a) => a.href);
@@ -154,9 +151,8 @@ async function mineArchive(browser, originalUrl) {
     return { title, body: clean.join("\n\n") };
   });
 
-  const snapshotUrl = page.url();
   await page.close();
-  return { title, body, snapshotUrl };
+  return { title, body };
 }
 
 async function cleanBodyWithGroq(title, body) {
@@ -205,10 +201,10 @@ async function sendToWordPress(title, body) {
       title: title,
       body: body,
     });
-    console.log("✓ Posted to WordPress:", response.data);
+    console.log("Posted to WordPress:", response.data);
   } catch (err) {
     console.error(
-      "✗ Error posting to WordPress:",
+      "Error posting to WordPress:",
       err.response?.data || err.message
     );
   }
@@ -222,33 +218,18 @@ async function sendToWordPress(title, body) {
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
       "--disable-gpu",
-      "--window-size=1920,1080",
     ],
-    defaultViewport: null,
-  }); //
+  });
 
   const surf = await browser.newPage();
   await surf.setRequestInterception(true);
   surf.on("request", (req) => {
-    const resourceType = req.resourceType();
-    const url = req.url();
-
-    if (
-      resourceType === "image" ||
-      resourceType === "stylesheet" ||
-      resourceType === "font" ||
-      url.includes("google-analytics") ||
-      url.includes("googletagmanager") ||
-      url.includes("facebook")
-    ) {
+    if (["image", "stylesheet", "font"].includes(req.resourceType())) {
       req.abort();
     } else {
       req.continue();
     }
   });
-  await surf.setUserAgent(
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
-  );
 
   console.log("Collecting article links from HBR…");
   const links = await collectHbrLinks(surf);
@@ -257,32 +238,38 @@ async function sendToWordPress(title, body) {
   const rows = [];
   for (const [i, link] of links.entries()) {
     try {
-      console.log(`[${i + 1}/${links.length}] Archiving ${link}`);
-      const { title, body, snapshotUrl } = await retry(() =>
-        mineArchive(browser, link)
-      );
+      console.log(`[${i + 1}/${links.length}] Attempting to archive: ${link}`);
+
+      // Use the archive function, wrapped in our retry logic.
+      const { title, body } = await retry(() => mineArchive(browser, link));
+
+      // This check is critical to prevent posting bad data.
       if (
         !title ||
         !body ||
         title === "ARCHIVE FAILED" ||
         title === "NO SNAPSHOT"
       ) {
-        console.warn(`Skipping ${link} due to missing or bad content`);
+        console.warn(
+          `Skipping ${link} due to archive failure or missing content.`
+        );
         continue;
       }
+
       const cleanedBody = await cleanBodyWithGroq(title, body);
       await sendToWordPress(title, cleanedBody);
-      console.log(`${title}:${cleanedBody}`);
+      console.log(`✓ Posted: ${title}`);
       rows.push([title, cleanedBody]);
     } catch (err) {
-      console.error(`✗ ${link}: ${err.message}`);
+      console.error(
+        `✗ An unexpected error occurred for ${link}: ${err.message}`
+      );
     }
-    await new Promise((res) => setTimeout(res, 1500));
+    await new Promise((res) => setTimeout(res, 2000));
   }
 
   console.log("Writing to Google Sheet…");
   console.log(rows);
-  // if (rows.length) await appendRows(rows);
   await browser.close();
   console.log("Done!");
 })();
