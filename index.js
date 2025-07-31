@@ -73,19 +73,23 @@ async function mineArchive(browser, originalUrl) {
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
   );
 
-  await page.goto("https://archive.is/", {
-    waitUntil: "networkidle2",
-    timeout: 90000,
-  });
+  try {
+    // 1. Bypass the search form by going directly to the submission URL.
+    // This is the key change to defeat bot detection.
+    await page.goto(`https://archive.is/${originalUrl}`, {
+      waitUntil: "networkidle2",
+      // Archiving can be slow, so we give it up to 2 minutes.
+      timeout: 120000,
+    });
+  } catch (e) {
+    console.warn(
+      `Failed during archive submission for ${originalUrl}: ${e.message}`
+    );
+    await page.close();
+    return { title: "ARCHIVE FAILED", body: "", snapshotUrl: "none" };
+  }
 
-  const searchInput = 'form#search input[name="q"]';
-  await page.waitForSelector(searchInput, { timeout: 45_000 });
-  await page.type(searchInput, originalUrl);
-  await Promise.all([
-    page.keyboard.press("Enter"),
-    page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 90000 }),
-  ]);
-
+  // The rest of the logic runs on the results page after submission.
   let resultsRoot = page;
   const frameHandle = await page.$('frame[name="frame"]');
   if (frameHandle) {
@@ -94,20 +98,23 @@ async function mineArchive(browser, originalUrl) {
 
   const snapLinkSel = 'div.TEXT-BLOCK a[href^="https://archive.is/"]';
   try {
-    await resultsRoot.waitForSelector(snapLinkSel, { timeout: 15_000 });
+    // Wait for the final snapshot link to appear on the page.
+    await resultsRoot.waitForSelector(snapLinkSel, { timeout: 20000 });
   } catch {
     console.warn("no snapshot for", originalUrl);
     await page.close();
     return { title: "NO SNAPSHOT", body: "", snapshotUrl: "none" };
   }
-  const snapshotHref = await resultsRoot.$eval(snapLinkSel, (a) => a.href);
 
-  await Promise.all([
-    resultsRoot.$eval(snapLinkSel, (a) => a.click()),
-    page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 0 }),
-  ]);
+  // 2. Directly navigate to the snapshot link instead of clicking it.
+  const snapshotHref = await resultsRoot.$eval(snapLinkSel, (a) => a.href);
+  await page.goto(snapshotHref, {
+    waitUntil: "domcontentloaded",
+    timeout: 90000,
+  });
 
   const { title, body } = await page.evaluate(() => {
+    // This part remains unchanged
     const title =
       document.querySelector("#CONTENT h1")?.innerText.trim() ||
       document.querySelector("h1")?.innerText.trim() ||
