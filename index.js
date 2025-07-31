@@ -8,9 +8,15 @@ dotenv.config();
 puppeteer.use(Stealth());
 
 async function collectHbrLinks(page) {
-  await page.goto("https://hbr.org/the-latest", {
-    waitUntil: "domcontentloaded",
-  });
+  try {
+    await page.goto("https://hbr.org/the-latest", {
+      waitUntil: "domcontentloaded",
+      timeout: 60000,
+    });
+  } catch (err) {
+    console.error("Failed to load HBR:", err.message);
+    return [];
+  }
 
   while (true) {
     const btn = await page.$('li.load-more a[js-target="load-ten-more-link"]');
