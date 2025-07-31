@@ -10,7 +10,7 @@ puppeteer.use(Stealth());
 async function collectHbrLinks(page) {
   try {
     await page.goto("https://hbr.org/the-latest", {
-      waitUntil: "load",
+      waitUntil: "networkidle0",
       timeout: 80000,
     });
 
