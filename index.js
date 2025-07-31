@@ -82,77 +82,83 @@ async function mineArchive(browser, originalUrl) {
   );
 
   try {
-    // Go directly to the submission URL. This is the most robust method.
-    await page.goto(`https://archive.is/${originalUrl}`, {
-      waitUntil: "networkidle2",
-      timeout: 150000, // Give archiving up to 2.5 minutes, as it can be slow.
-    });
-  } catch (e) {
-    console.warn(
-      `Failed during archive submission for ${originalUrl}: ${e.message}`
+    await page.goto(
+      `https://archive.is/?run=1&url=${encodeURIComponent(originalUrl)}`,
+      {
+        waitUntil: "domcontentloaded",
+        timeout: 120000,
+      }
     );
+
+    await page.waitForTimeout(5000); // wait for background processing
+
+    const frameHandle = await page
+      .waitForSelector('frame[name="frame"]', { timeout: 15000 })
+      .catch(() => null);
+    let resultsRoot = page;
+
+    if (frameHandle) {
+      const frame = await frameHandle.contentFrame();
+      if (frame) resultsRoot = frame;
+    }
+
+    const snapLinkSel = 'div.TEXT-BLOCK a[href^="https://archive.is/"]';
+    await resultsRoot.waitForSelector(snapLinkSel, { timeout: 30000 });
+    const snapshotHref = await resultsRoot.$eval(snapLinkSel, (a) => a.href);
+
+    // Extra retry if snapshot load is incomplete
+    await page.goto(snapshotHref, {
+      waitUntil: "domcontentloaded",
+      timeout: 90000,
+    });
+
+    // Ensure snapshot content is loaded
+    await page.waitForSelector("h1, #CONTENT", { timeout: 15000 });
+
+    const { title, body } = await page.evaluate(() => {
+      const title =
+        document.querySelector("#CONTENT h1")?.innerText.trim() ||
+        document.querySelector("h1")?.innerText.trim() ||
+        document.title.replace(/ \|.*$/, "").trim();
+
+      const unwanted = [
+        "Subscribe",
+        "Sign In",
+        "Read more",
+        "Post",
+        "Share",
+        "Save",
+        "Print",
+        "{{terminalError}}",
+        "Recaptcha requires verification",
+        "Privacy - Terms",
+        /\d{1,3}%\s*$/,
+      ];
+      const bad = (t) =>
+        !t ||
+        unwanted.some((p) =>
+          typeof p === "string" ? t.includes(p) : p.test(t)
+        );
+
+      const blocks = Array.from(
+        document.querySelectorAll("#CONTENT p, #CONTENT div, article p")
+      )
+        .map((el) => el.innerText.trim())
+        .filter((t) => !bad(t));
+
+      const firstReal = blocks.findIndex((t) => t.length > 40);
+      const clean = firstReal === -1 ? blocks : blocks.slice(firstReal);
+
+      return { title, body: clean.join("\n\n") };
+    });
+
     await page.close();
-    return { title: "ARCHIVE FAILED", body: "" };
-  }
-
-  let resultsRoot = page;
-  const frameHandle = await page.$('frame[name="frame"]');
-  if (frameHandle) {
-    resultsRoot = await frameHandle.contentFrame();
-  }
-
-  const snapLinkSel = 'div.TEXT-BLOCK a[href^="https://archive.is/"]';
-  try {
-    await resultsRoot.waitForSelector(snapLinkSel, { timeout: 60000 });
-  } catch {
-    console.warn("no snapshot for", originalUrl);
+    return { title, body };
+  } catch (e) {
+    console.warn("Failed archiving:", originalUrl, e.message);
     await page.close();
     return { title: "NO SNAPSHOT", body: "" };
   }
-
-  const snapshotHref = await resultsRoot.$eval(snapLinkSel, (a) => a.href);
-  await page.goto(snapshotHref, {
-    waitUntil: "domcontentloaded",
-    timeout: 90000,
-  });
-
-  const { title, body } = await page.evaluate(() => {
-    const title =
-      document.querySelector("#CONTENT h1")?.innerText.trim() ||
-      document.querySelector("h1")?.innerText.trim() ||
-      document.title.replace(/ \|.*$/, "").trim();
-
-    const unwanted = [
-      "Subscribe",
-      "Sign In",
-      "Read more",
-      "Post",
-      "Share",
-      "Save",
-      "Print",
-      "{{terminalError}}",
-      "Recaptcha requires verification",
-      "Privacy - Terms",
-      /\d{1,3}%\s*$/,
-    ];
-    const bad = (t) =>
-      !t ||
-      unwanted.some((p) => (typeof p === "string" ? t.includes(p) : p.test(t)));
-
-    const blocks = Array.from(
-      document.querySelectorAll("#CONTENT p, #CONTENT div, article p")
-    )
-      .map((el) => el.innerText.trim())
-      .filter((t) => !bad(t));
-
-    const firstReal = blocks.findIndex((t) => t.length > 40);
-    const clean = firstReal === -1 ? blocks : blocks.slice(firstReal);
-
-    return { title, body: clean.join("\n\n") };
-  });
-
-  await page.close();
-  return { title, body };
 }
 
 async function cleanBodyWithGroq(title, body) {
