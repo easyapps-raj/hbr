@@ -90,8 +90,7 @@ async function mineArchive(browser, originalUrl) {
       }
     );
 
-    await page.waitForTimeout(5000); // wait for background processing
-
+    await new Promise((resolve) => setTimeout(resolve, 5000)); // wait for background processing
     const frameHandle = await page
       .waitForSelector('frame[name="frame"]', { timeout: 15000 })
       .catch(() => null);
