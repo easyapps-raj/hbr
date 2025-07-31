@@ -19,6 +19,18 @@ async function waitForSelectorWithRetry(page, selector, retries = 3) {
   }
 }
 
+async function retry(fn, attempts = 3, delay = 3000) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      console.warn(`Retry ${i + 1}/${attempts} failed: ${e.message}`);
+      if (i < attempts - 1) await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw new Error("All retries failed.");
+}
+
 async function collectHbrLinks(page) {
   try {
     await page.goto("https://hbr.org/the-latest", {
@@ -253,9 +265,20 @@ async function sendToWordPress(title, body) {
   for (const [i, link] of links.entries()) {
     try {
       console.log(`[${i + 1}/${links.length}] Archiving ${link}`);
-      const { title, body, snapshotUrl } = await mineArchive(browser, link);
+      const { title, body, snapshotUrl } = await retry(() =>
+        mineArchive(browser, link)
+      );
+      if (
+        !title ||
+        !body ||
+        title === "ARCHIVE FAILED" ||
+        title === "NO SNAPSHOT"
+      ) {
+        console.warn(`Skipping ${link} due to missing or bad content`);
+        continue;
+      }
       const cleanedBody = await cleanBodyWithGroq(title, body);
-      sendToWordPress(title, cleanedBody);
+      await sendToWordPress(title, cleanedBody);
       console.log(`${title}:${cleanedBody}`);
       rows.push([title, cleanedBody]);
     } catch (err) {
