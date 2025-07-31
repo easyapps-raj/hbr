@@ -22,9 +22,11 @@ async function waitForSelectorWithRetry(page, selector, retries = 3) {
 async function collectHbrLinks(page) {
   try {
     await page.goto("https://hbr.org/the-latest", {
-      waitUntil: "networkidle0",
+      waitUntil: "domcontentloaded",
       timeout: 80000,
     });
+    const html = await page.content();
+    console.log("Page content snippet:", html.slice(0, 1000));
 
     await waitForSelectorWithRetry(page, "h3.hed a");
   } catch (err) {
