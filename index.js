@@ -68,14 +68,13 @@ async function collectHbrLinks(page) {
 }
 
 async function mineArchive(browser, originalUrl) {
-  const UA =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36";
-
   const page = await browser.newPage();
-  await page.setUserAgent(UA);
+  await page.setUserAgent(
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+  );
+
   await page.goto("https://archive.is/", {
-    waitUntil: "domcontentloaded",
+    waitUntil: "networkidle2",
     timeout: 90000,
   });
 
