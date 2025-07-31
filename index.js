@@ -2,6 +2,7 @@ import puppeteer from "puppeteer-extra";
 import Stealth from "puppeteer-extra-plugin-stealth";
 import axios from "axios";
 import dotenv from "dotenv";
+import { timeout } from "puppeteer";
 
 dotenv.config();
 
@@ -40,7 +41,8 @@ async function collectHbrLinks(page) {
     await Promise.all([
       btn.click(),
       page.waitForResponse(
-        (r) => r.url().includes("/latest") || r.url().includes("/load")
+        (r) => r.url().includes("/latest") || r.url().includes("/load"),
+        { timeout: 60000 }
       ),
       await new Promise((res) => setTimeout(res, 800)),
     ]);
@@ -61,7 +63,7 @@ async function mineArchive(browser, originalUrl) {
   await page.setUserAgent(UA);
   await page.goto("https://archive.is/", {
     waitUntil: "domcontentloaded",
-    timeout: 0,
+    timeout: 90000,
   });
 
   const searchInput = 'form#search input[name="q"]';
@@ -69,7 +71,7 @@ async function mineArchive(browser, originalUrl) {
   await page.type(searchInput, originalUrl);
   await Promise.all([
     page.keyboard.press("Enter"),
-    page.waitForNavigation({ waitUntil: "domcontentloaded" }),
+    page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 90000 }),
   ]);
 
   let resultsRoot = page;
@@ -141,6 +143,9 @@ async function cleanBodyWithGroq(title, body) {
     - Preserve the article's main content only.
     - Also dont write Here is the cleaned-up article content:
     - Try give full article and dont cut in between
+    - Dont mention that this is a cleaned-up article
+    - Also dont mention any unwanted spaces or new lines
+    - dont mention any unwanted information
     
     Title: ${title}
     Body:
