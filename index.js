@@ -14,7 +14,7 @@ async function collectHbrLinks(page) {
       timeout: 80000,
     });
 
-    await page.waitForSelector("h3.hed a", { timeout: 30000 });
+    await page.waitForSelector("h3.hed a", { timeout: 80000 });
   } catch (err) {
     console.error("Failed to load HBR:", err.message);
     return [];
