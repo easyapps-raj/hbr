@@ -6,6 +6,18 @@ import dotenv from "dotenv";
 dotenv.config();
 
 puppeteer.use(Stealth());
+async function waitForSelectorWithRetry(page, selector, retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      await page.waitForSelector(selector, { timeout: 60000 });
+      return;
+    } catch (err) {
+      if (i === retries - 1) throw err;
+      console.warn(`Retrying ${selector} (${i + 1}/${retries})`);
+      await page.reload({ waitUntil: "networkidle0" });
+    }
+  }
+}
 
 async function collectHbrLinks(page) {
   try {
@@ -14,7 +26,7 @@ async function collectHbrLinks(page) {
       timeout: 80000,
     });
 
-    await page.waitForSelector("h3.hed a", { timeout: 80000 });
+    await waitForSelectorWithRetry(page, "h3.hed a");
   } catch (err) {
     console.error("Failed to load HBR:", err.message);
     return [];
@@ -186,8 +198,7 @@ async function sendToWordPress(title, body) {
 
   const surf = await browser.newPage();
   await surf.setUserAgent(
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-      "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
   );
 
   console.log("Collecting article links from HBR…");
@@ -211,7 +222,7 @@ async function sendToWordPress(title, body) {
 
   console.log("Writing to Google Sheet…");
   console.log(rows);
-  if (rows.length) await appendRows(rows);
+  // if (rows.length) await appendRows(rows);
   await browser.close();
   console.log("Done!");
 })();
