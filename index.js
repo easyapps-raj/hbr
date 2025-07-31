@@ -86,12 +86,9 @@ async function mineArchive(browser, originalUrl) {
   );
 
   try {
-    // 1. Bypass the search form by going directly to the submission URL.
-    // This is the key change to defeat bot detection.
     await page.goto(`https://archive.is/${originalUrl}`, {
       waitUntil: "networkidle2",
-      // Archiving can be slow, so we give it up to 2 minutes.
-      timeout: 120000,
+      timeout: 150000,
     });
   } catch (e) {
     console.warn(
@@ -101,7 +98,6 @@ async function mineArchive(browser, originalUrl) {
     return { title: "ARCHIVE FAILED", body: "", snapshotUrl: "none" };
   }
 
-  // The rest of the logic runs on the results page after submission.
   let resultsRoot = page;
   const frameHandle = await page.$('frame[name="frame"]');
   if (frameHandle) {
@@ -110,15 +106,13 @@ async function mineArchive(browser, originalUrl) {
 
   const snapLinkSel = 'div.TEXT-BLOCK a[href^="https://archive.is/"]';
   try {
-    // Wait for the final snapshot link to appear on the page.
-    await resultsRoot.waitForSelector(snapLinkSel, { timeout: 20000 });
+    await resultsRoot.waitForSelector(snapLinkSel, { timeout: 60000 });
   } catch {
     console.warn("no snapshot for", originalUrl);
     await page.close();
     return { title: "NO SNAPSHOT", body: "", snapshotUrl: "none" };
   }
 
-  // 2. Directly navigate to the snapshot link instead of clicking it.
   const snapshotHref = await resultsRoot.$eval(snapLinkSel, (a) => a.href);
   await page.goto(snapshotHref, {
     waitUntil: "domcontentloaded",
@@ -126,7 +120,6 @@ async function mineArchive(browser, originalUrl) {
   });
 
   const { title, body } = await page.evaluate(() => {
-    // This part remains unchanged
     const title =
       document.querySelector("#CONTENT h1")?.innerText.trim() ||
       document.querySelector("h1")?.innerText.trim() ||
