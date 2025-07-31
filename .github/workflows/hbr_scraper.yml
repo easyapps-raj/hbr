@@ -23,3 +23,6 @@ jobs:
 
       - name: Run HBR scraper
         run: node index.js
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          WP_URL: ${{ secrets.WP_URL }}
